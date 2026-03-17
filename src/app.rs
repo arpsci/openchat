@@ -1,10 +1,11 @@
 use eframe::egui;
-use egui::{Align, Frame, Layout};
+use egui::Frame;
 
 use crate::chat::ChatExample;
 use crate::ollama::{OllamaController, OllamaStatus};
 
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct MyApp {
     pub chat: ChatExample,
@@ -20,6 +21,9 @@ pub struct MyApp {
     chat_token_limit_enabled: bool,
     chat_use_mode: ChatUseMode,
     download_chat_format: DownloadChatFormat,
+    download_keyboard_format: DownloadChatFormat,
+    keyboard_recording: bool,
+    keyboard_input_log: Vec<(String, String)>,
     left_column_tab: LeftColumnTab,
 }
 
@@ -70,13 +74,66 @@ impl Default for MyApp {
             chat_token_limit_enabled: false,
             chat_use_mode: ChatUseMode::default(),
             download_chat_format: DownloadChatFormat::default(),
+            download_keyboard_format: DownloadChatFormat::default(),
+            keyboard_recording: false,
+            keyboard_input_log: Vec::new(),
             left_column_tab: LeftColumnTab::default(),
         }
     }
 }
 
+impl MyApp {
+    fn current_timestamp_string() -> String {
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let day_secs = now_secs % 86_400;
+        let hours = day_secs / 3_600;
+        let minutes = (day_secs % 3_600) / 60;
+        let seconds = day_secs % 60;
+        format!("{hours:02}:{minutes:02}:{seconds:02}")
+    }
+}
+
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.keyboard_recording {
+            let events = ctx.input(|i| i.events.clone());
+            for event in events {
+                match event {
+                    egui::Event::Text(text) if !text.is_empty() => {
+                        self.keyboard_input_log
+                            .push((Self::current_timestamp_string(), text));
+                    }
+                    egui::Event::Key {
+                        key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } => {
+                        let mut key_repr = String::new();
+                        if modifiers.ctrl {
+                            key_repr.push_str("Ctrl+");
+                        }
+                        if modifiers.alt {
+                            key_repr.push_str("Alt+");
+                        }
+                        if modifiers.shift {
+                            key_repr.push_str("Shift+");
+                        }
+                        if modifiers.mac_cmd || modifiers.command {
+                            key_repr.push_str("Cmd+");
+                        }
+                        key_repr.push_str(&format!("{key:?}"));
+                        self.keyboard_input_log
+                            .push((Self::current_timestamp_string(), key_repr));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             let panel_gap = 8.0;
             let available_width = ui.available_width();
@@ -121,193 +178,274 @@ impl eframe::App for MyApp {
 
                             match self.left_column_tab {
                                 LeftColumnTab::General => {
-                            // Chat Status with green border
-                            egui::Frame::default()
-                                .inner_margin(egui::Margin { left: 6.0, right: 6.0, top: 6.0, bottom: 6.0 })
-                                .rounding(4.0)
-                                .show(ui, |ui| {
-                                    ui.vertical(|ui| {
-                                        ui.label(egui::RichText::new("Chat Settings").strong());
-                                        ui.add_space(4.0);
-                                        ui.horizontal(|ui| {
-                                            if ui
-                                                .selectable_label(
-                                                    self.chat_use_mode == ChatUseMode::HumanAi,
-                                                    "Human-Agent",
-                                                )
-                                                .clicked()
-                                            {
-                                                self.chat_use_mode = ChatUseMode::HumanAi;
-                                                println!("Selected mode: Human-Agent");
-                                            }
-                                            if ui
-                                                .selectable_label(
-                                                    self.chat_use_mode == ChatUseMode::AiAi,
-                                                    "Agent-Agent",
-                                                )
-                                                .clicked()
-                                            {
-                                                self.chat_use_mode = ChatUseMode::AiAi;
-                                                println!("Selected mode: Agent-Agent");
-                                            }
-                                        });
-                                        ui.add_space(4.0);
-                                        let ollama_models = self.ollama.models();
-                                        let ollama_status_chat = self.ollama.status();
-                                        if ollama_status_chat == OllamaStatus::Running && !ollama_models.is_empty() {
-                                            egui::ComboBox::from_id_source("chat_model_selector")
-                                                .selected_text(if self.selected_model.is_empty() {
-                                                    "Select model"
-                                                } else {
-                                                    &self.selected_model
-                                                })
-                                                .show_ui(ui, |ui| {
-                                                    for model in &ollama_models {
-                                                        if ui.selectable_label(self.selected_model == *model, model).clicked() {
-                                                            self.selected_model = model.clone();
-                                                        }
-                                                    }
-                                                });
-                                        } else {
-                                            ui.label(egui::RichText::new("No models available").small().weak());
-                                        }
-                                        ui.add_space(4.0);
-                                        ui.horizontal(|ui| {
-                                            ui.checkbox(&mut self.chat_token_limit_enabled, "Token Limit");
-                                            if self.chat_token_limit_enabled {
-                                                ui.label("Tokens:");
-                                                ui.add_sized(
-                                                    [40.0, 18.0],
-                                                    egui::DragValue::new(&mut self.chat_token_limit)
-                                                        .range(1..=1000)
-                                                        .speed(1.0),
-                                                );
-                                            }
-                                        });
-                                        ui.add_space(4.0);
-                                        //ui.label(egui::RichText::new("Download Chat").small());
-                                        ui.horizontal(|ui| {
-                                            egui::ComboBox::from_id_source("download_chat_format")
-                                                .selected_text(match self.download_chat_format {
-                                                    DownloadChatFormat::Json => "JSON",
-                                                    DownloadChatFormat::Csv => "CSV",
-                                                })
-                                                .show_ui(ui, |ui| {
-                                                    ui.selectable_value(
-                                                        &mut self.download_chat_format,
-                                                        DownloadChatFormat::Json,
-                                                        "JSON",
-                                                    );
-                                                    ui.selectable_value(
-                                                        &mut self.download_chat_format,
-                                                        DownloadChatFormat::Csv,
-                                                        "CSV",
-                                                    );
-                                                });
-
-                                            if ui.button("Download").clicked() {
-                                                let rows = self.chat.export_rows();
-                                                let (content, default_name) = match self.download_chat_format {
-                                                    DownloadChatFormat::Json => {
-                                                        let data: Vec<serde_json::Value> = rows
-                                                            .into_iter()
-                                                            .map(|(timestamp, from, content)| {
-                                                                serde_json::json!({
-                                                                    "timestamp": timestamp,
-                                                                    "from": from,
-                                                                    "content": content
-                                                                })
-                                                            })
-                                                            .collect();
-                                                        (
-                                                            serde_json::to_string_pretty(&data).unwrap_or_else(|_| "[]".to_string()),
-                                                            "chat-export.json",
-                                                        )
-                                                    }
-                                                    DownloadChatFormat::Csv => {
-                                                        let mut csv = String::from("timestamp,from,content\n");
-                                                        for (timestamp, from, content) in rows {
-                                                            let esc = |s: &str| format!("\"{}\"", s.replace('\"', "\"\""));
-                                                            csv.push_str(
-                                                                &format!("{},{},{}\n", esc(&timestamp), esc(&from), esc(&content)),
-                                                            );
-                                                        }
-                                                        (csv, "chat-export.csv")
-                                                    }
-                                                };
-
-                                                if let Some(path) = rfd::FileDialog::new()
-                                                    .set_file_name(default_name)
-                                                    .save_file()
-                                                {
-                                                    if let Err(err) = std::fs::write(path, content) {
-                                                        eprintln!("Failed to save chat export: {err}");
-                                                    }
-                                                }
-                                            }
-                                        });
-                                        ui.add_space(4.0);
-                                        if ui.button("Clear Chat").clicked() {
-                                            self.chat.clear_messages();
-                                        }
-                                    });
-                                });
-                            ui.add_space(8.0);
-                            ui.separator();
-                            ui.add_space(8.0);
-                                    
-                                    // Communication header with green border - 100% width
-                                    egui::Frame::default()
-                                        .inner_margin(egui::Margin { left: 6.0, right: 6.0, top: 6.0, bottom: 6.0 })
-                                        .rounding(4.0)
+                                    egui::CollapsingHeader::new("Chat Settings")
+                                        .default_open(true)
                                         .show(ui, |ui| {
-                                            ui.vertical(|ui| {
-                                                
-                                                // Server Status
-                                                ui.label(egui::RichText::new("HTTP Server Status").strong());
-                                                ui.add_space(4.0);
-                                                
-                                                let (status_text, status_color) = match self.server_status {
-                                                    ServerStatus::Running => ("● Running", egui::Color32::WHITE),
-                                                    ServerStatus::Stopped => ("● Stopped", egui::Color32::GRAY),
-                                                };
-                                                
-                                                ui.label(egui::RichText::new(status_text).color(status_color));
-                                                ui.add_space(4.0);
-                                                
-                                                // ON/OFF button
-                                                let is_enabled = *self.server_enabled.lock().unwrap();
-                                                let button_text = if is_enabled { "OFF" } else { "ON" };
-                                                
-                                                if ui.button(button_text).clicked() {
-                                                    let mut enabled = self.server_enabled.lock().unwrap();
-                                                    *enabled = !*enabled;
-                                                    self.server_status = if *enabled {
-                                                        ServerStatus::Running
-                                                    } else {
-                                                        ServerStatus::Stopped
-                                                    };
+                                            ui.horizontal(|ui| {
+                                                if ui
+                                                    .selectable_label(
+                                                        self.chat_use_mode == ChatUseMode::HumanAi,
+                                                        "Human-Agent",
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    self.chat_use_mode = ChatUseMode::HumanAi;
+                                                    println!("Selected mode: Human-Agent");
                                                 }
-                                                
-                                                ui.add_space(2.0);
-                                                ui.label(egui::RichText::new("http://127.0.0.1:3000").small().weak());
+                                                if ui
+                                                    .selectable_label(
+                                                        self.chat_use_mode == ChatUseMode::AiAi,
+                                                        "Agent-Agent",
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    self.chat_use_mode = ChatUseMode::AiAi;
+                                                    println!("Selected mode: Agent-Agent");
+                                                }
                                             });
+                                            ui.add_space(4.0);
+                                            let ollama_models = self.ollama.models();
+                                            let ollama_status_chat = self.ollama.status();
+                                            if ollama_status_chat == OllamaStatus::Running && !ollama_models.is_empty() {
+                                                egui::ComboBox::from_id_source("chat_model_selector")
+                                                    .selected_text(if self.selected_model.is_empty() {
+                                                        "Select model"
+                                                    } else {
+                                                        &self.selected_model
+                                                    })
+                                                    .show_ui(ui, |ui| {
+                                                        for model in &ollama_models {
+                                                            if ui.selectable_label(self.selected_model == *model, model).clicked() {
+                                                                self.selected_model = model.clone();
+                                                            }
+                                                        }
+                                                    });
+                                            } else {
+                                                ui.label(egui::RichText::new("No models available").small().weak());
+                                            }
+                                            ui.add_space(4.0);
+                                            ui.horizontal(|ui| {
+                                                ui.checkbox(&mut self.chat_token_limit_enabled, "Token Limit");
+                                                if self.chat_token_limit_enabled {
+                                                    ui.label("Tokens:");
+                                                    ui.add_sized(
+                                                        [40.0, 18.0],
+                                                        egui::DragValue::new(&mut self.chat_token_limit)
+                                                            .range(1..=1000)
+                                                            .speed(1.0),
+                                                    );
+                                                }
+                                            });
+                                            ui.add_space(4.0);
+                                            ui.horizontal(|ui| {
+                                                let label = if self.keyboard_recording {
+                                                    "Stop Recording"
+                                                } else {
+                                                    "Record Keyboard"
+                                                };
+                                                if ui.button(label).clicked() {
+                                                    self.keyboard_recording = !self.keyboard_recording;
+                                                    if self.keyboard_recording {
+                                                        self.keyboard_input_log.clear();
+                                                    }
+                                                }
+                                                if self.keyboard_recording {
+                                                    ui.label(egui::RichText::new("Recording").small().weak());
+                                                }
+                                            });
+                                            ui.add_space(4.0);
+
+                                            egui::CollapsingHeader::new("Download Chat Messages")
+                                                .default_open(true)
+                                                .show(ui, |ui| {
+                                                    ui.horizontal(|ui| {
+                                                        egui::ComboBox::from_id_source("download_chat_format")
+                                                            .selected_text(match self.download_chat_format {
+                                                                DownloadChatFormat::Json => "JSON",
+                                                                DownloadChatFormat::Csv => "CSV",
+                                                            })
+                                                            .show_ui(ui, |ui| {
+                                                                ui.selectable_value(
+                                                                    &mut self.download_chat_format,
+                                                                    DownloadChatFormat::Json,
+                                                                    "JSON",
+                                                                );
+                                                                ui.selectable_value(
+                                                                    &mut self.download_chat_format,
+                                                                    DownloadChatFormat::Csv,
+                                                                    "CSV",
+                                                                );
+                                                            });
+
+                                                        if ui.button("Download").clicked() {
+                                                            let rows = self.chat.export_rows();
+                                                            let (content, default_name) = match self.download_chat_format {
+                                                                DownloadChatFormat::Json => {
+                                                                    let data: Vec<serde_json::Value> = rows
+                                                                        .into_iter()
+                                                                        .map(|(timestamp, from, content)| {
+                                                                            serde_json::json!({
+                                                                                "timestamp": timestamp,
+                                                                                "from": from,
+                                                                                "content": content
+                                                                            })
+                                                                        })
+                                                                        .collect();
+                                                                    (
+                                                                        serde_json::to_string_pretty(&data)
+                                                                            .unwrap_or_else(|_| "[]".to_string()),
+                                                                        "chat-export.json",
+                                                                    )
+                                                                }
+                                                                DownloadChatFormat::Csv => {
+                                                                    let mut csv =
+                                                                        String::from("timestamp,from,content\n");
+                                                                    for (timestamp, from, content) in rows {
+                                                                        let esc =
+                                                                            |s: &str| format!("\"{}\"", s.replace('\"', "\"\""));
+                                                                        csv.push_str(
+                                                                            &format!(
+                                                                                "{},{},{}\n",
+                                                                                esc(&timestamp),
+                                                                                esc(&from),
+                                                                                esc(&content)
+                                                                            ),
+                                                                        );
+                                                                    }
+                                                                    (csv, "chat-export.csv")
+                                                                }
+                                                            };
+
+                                                            if let Some(path) = rfd::FileDialog::new()
+                                                                .set_file_name(default_name)
+                                                                .save_file()
+                                                            {
+                                                                if let Err(err) = std::fs::write(path, content) {
+                                                                    eprintln!("Failed to save chat export: {err}");
+                                                                }
+                                                            }
+                                                        }
+                                                    });
+                                                });
+
+                                            ui.add_space(4.0);
+
+                                            egui::CollapsingHeader::new("Download Keyboard Input")
+                                                .default_open(true)
+                                                .show(ui, |ui| {
+                                                    ui.horizontal(|ui| {
+                                                        egui::ComboBox::from_id_source("download_keyboard_format")
+                                                            .selected_text(match self.download_keyboard_format {
+                                                                DownloadChatFormat::Json => "JSON",
+                                                                DownloadChatFormat::Csv => "CSV",
+                                                            })
+                                                            .show_ui(ui, |ui| {
+                                                                ui.selectable_value(
+                                                                    &mut self.download_keyboard_format,
+                                                                    DownloadChatFormat::Json,
+                                                                    "JSON",
+                                                                );
+                                                                ui.selectable_value(
+                                                                    &mut self.download_keyboard_format,
+                                                                    DownloadChatFormat::Csv,
+                                                                    "CSV",
+                                                                );
+                                                            });
+
+                                                        if ui.button("Download").clicked() {
+                                                            let (content, default_name) = match self.download_keyboard_format {
+                                                                DownloadChatFormat::Json => {
+                                                                    let data: Vec<serde_json::Value> = self
+                                                                        .keyboard_input_log
+                                                                        .iter()
+                                                                        .map(|(timestamp, stroke)| {
+                                                                            serde_json::json!({
+                                                                                "timestamp": timestamp,
+                                                                                "stroke": stroke
+                                                                            })
+                                                                        })
+                                                                        .collect();
+                                                                    (
+                                                                        serde_json::to_string_pretty(&data)
+                                                                            .unwrap_or_else(|_| "[]".to_string()),
+                                                                        "keyboard-input-export.json",
+                                                                    )
+                                                                }
+                                                                DownloadChatFormat::Csv => {
+                                                                    let mut csv = String::from("timestamp,stroke\n");
+                                                                    for (timestamp, stroke) in &self.keyboard_input_log {
+                                                                        let esc =
+                                                                            |s: &str| format!("\"{}\"", s.replace('\"', "\"\""));
+                                                                        csv.push_str(
+                                                                            &format!("{},{}\n", esc(timestamp), esc(stroke)),
+                                                                        );
+                                                                    }
+                                                                    (csv, "keyboard-input-export.csv")
+                                                                }
+                                                            };
+
+                                                            if let Some(path) = rfd::FileDialog::new()
+                                                                .set_file_name(default_name)
+                                                                .save_file()
+                                                            {
+                                                                if let Err(err) = std::fs::write(path, content) {
+                                                                    eprintln!(
+                                                                        "Failed to save keyboard input export: {err}"
+                                                                    );
+                                                                }
+                                                            }
+                                                        }
+                                                    });
+                                                });
+                                            ui.add_space(4.0);
+                                            if ui.button("Clear Chat").clicked() {
+                                                self.chat.clear_messages();
+                                            }
                                         });
-                                    
-                                    // Separator
+
                                     ui.add_space(8.0);
                                     ui.separator();
                                     ui.add_space(8.0);
 
-                                    // Ollama Status card with green border
-                                    egui::Frame::default()
-                                        .inner_margin(egui::Margin { left: 6.0, right: 6.0, top: 6.0, bottom: 6.0 })
-                                        .rounding(4.0)
+                                    egui::CollapsingHeader::new("HTTP Server Status")
+                                        .default_open(true)
                                         .show(ui, |ui| {
-                                            ui.label(egui::RichText::new("Ollama Status").strong());
+                                            let (status_text, status_color) = match self.server_status {
+                                                ServerStatus::Running => ("● Running", egui::Color32::WHITE),
+                                                ServerStatus::Stopped => ("● Stopped", egui::Color32::GRAY),
+                                            };
+
+                                            ui.label(egui::RichText::new(status_text).color(status_color));
                                             ui.add_space(4.0);
 
-                                            let ollama_status = self.ollama.status();
+                                            let is_enabled = *self.server_enabled.lock().unwrap();
+                                            let button_text = if is_enabled { "OFF" } else { "ON" };
+
+                                            if ui.button(button_text).clicked() {
+                                                let mut enabled = self.server_enabled.lock().unwrap();
+                                                *enabled = !*enabled;
+                                                self.server_status = if *enabled {
+                                                    ServerStatus::Running
+                                                } else {
+                                                    ServerStatus::Stopped
+                                                };
+                                            }
+
+                                            ui.add_space(2.0);
+                                            ui.label(egui::RichText::new("http://127.0.0.1:3000").small().weak());
+                                        });
+
+                                    ui.add_space(8.0);
+                                    ui.separator();
+                                    ui.add_space(8.0);
+
+                                    let ollama_status = self.ollama.status();
+                                    let models = self.ollama.models();
+                                    let current_model = self.selected_ollama_model.lock().unwrap().clone();
+
+                                    egui::CollapsingHeader::new("Ollama Status")
+                                        .default_open(true)
+                                        .show(ui, |ui| {
                                             let (ollama_status_text, ollama_status_color) = match ollama_status {
                                                 OllamaStatus::Running => ("● Running", egui::Color32::WHITE),
                                                 OllamaStatus::Stopped => ("● Stopped", egui::Color32::GRAY),
@@ -317,7 +455,6 @@ impl eframe::App for MyApp {
                                             ui.label(egui::RichText::new(ollama_status_text).color(ollama_status_color));
                                             ui.add_space(4.0);
 
-                                            // Check button
                                             if ui.button("Check").clicked() {
                                                 self.ollama.check_status();
                                                 self.ollama.fetch_models();
@@ -325,19 +462,15 @@ impl eframe::App for MyApp {
 
                                             ui.add_space(2.0);
                                             ui.label(egui::RichText::new("http://127.0.0.1:11434").small().weak());
-                                            ui.add_space(4.0);
+                                        });
 
-                                            ui.separator();
-                                            ui.add_space(4.0);
+                                    ui.add_space(8.0);
+                                    ui.separator();
+                                    ui.add_space(8.0);
 
-                                            ui.label(egui::RichText::new("Test Ollama API").strong());
-                                            ui.add_space(4.0);
-
-
-                                            // Model combobox
-                                            let models = self.ollama.models();
-                                            let current_model = self.selected_ollama_model.lock().unwrap().clone();
-
+                                    egui::CollapsingHeader::new("Test Ollama API")
+                                        .default_open(true)
+                                        .show(ui, |ui| {
                                             if ollama_status == OllamaStatus::Running && !models.is_empty() {
                                                 egui::ComboBox::from_id_source("ollama_model_selector")
                                                     .selected_text(if current_model.is_empty() {
@@ -360,7 +493,7 @@ impl eframe::App for MyApp {
                                                 ui.label(egui::RichText::new("No models available").small().weak());
                                             }
                                             ui.add_space(4.0);
-                                            // Token limit toggle and input
+
                                             ui.horizontal(|ui| {
                                                 ui.checkbox(&mut self.ollama_token_limit_enabled, "Token Limit");
                                                 if self.ollama_token_limit_enabled {
@@ -374,7 +507,7 @@ impl eframe::App for MyApp {
                                                 }
                                             });
                                             ui.add_space(4.0);
-                                            // Input field and Send button (always visible)
+
                                             ui.horizontal(|ui| {
                                                 let total_width = ui.available_width();
                                                 let input_width = total_width * 0.4;
@@ -399,6 +532,11 @@ impl eframe::App for MyApp {
                                                         None
                                                     };
                                                     let tx = self.chat.inbox().sender();
+                                                    let system_message = crate::chat::ChatMessage {
+                                                        content: format!("Testing Ollama API: {}", message),
+                                                        from: Some("System".to_string()),
+                                                    };
+                                                    tx.send(system_message).ok();
                                                     self.ollama.send_message(
                                                         model,
                                                         message,
@@ -423,37 +561,13 @@ impl eframe::App for MyApp {
                             });
                         });
                 
-                // Center column - 60% width (top bar + chat area)
+                // Center column - 60% width (chat area only)
                 ui.vertical(|ui| {
                     ui.set_min_width(center_width);
                     ui.set_max_width(center_width);
-                    
-                    // Top bar - 20% of window height
-                    let top_bar_height = content_height * 0.08;
-                    let top_bar_width = center_width;
 
-                    ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                        ui.set_min_width(top_bar_width);
-                        ui.set_max_width(top_bar_width);
-                        Frame::default()
-                            .fill(light_gray_bg)
-                            .inner_margin(0.0)
-                            .outer_margin(0.0)
-                            .show(ui, |ui| {
-                                ui.set_min_width(top_bar_width);
-                                ui.set_max_width(top_bar_width);
-                                ui.set_height(top_bar_height);
-                                ui.horizontal(|ui| {
-                                    ui.set_min_width(top_bar_width);
-                                    ui.set_max_width(top_bar_width);
-                                    ui.add_space(8.0);
-                                });
-                            });
-                    });
-                    
-                    ui.add_space(4.0);  
-                    // Chat area - remaining height
-                    let chat_area_height = (content_height - top_bar_height - 4.0).max(0.0);
+                    // Chat area - full height
+                    let chat_area_height = content_height;
                     Frame::default()
                         .fill(light_gray_bg)
                         .inner_margin(0.0)
@@ -479,9 +593,9 @@ impl eframe::App for MyApp {
                             self.chat.set_message_handler(Box::new(move |message: String| {
                                 let tx_clone = tx.clone();
                                 if selected_model.is_empty() {
-                                    // No model selected, respond with "Please select a model"
+                                    // No model selected, prompt user to select one
                                     let bot_message = crate::chat::ChatMessage {
-                                        content: "ams-chat Started".to_string(),
+                                        content: "Please select Ollama Model.".to_string(),
                                         from: Some("System".to_string()),
                                     };
                                     tx_clone.send(bot_message).ok();
@@ -512,7 +626,9 @@ impl eframe::App for MyApp {
                                     tx_clone.send(bot_message).ok();
                                 }
                             }));
-                            
+
+                            self.chat
+                                .set_main_input_enabled(self.chat_use_mode == ChatUseMode::HumanAi);
                             self.chat.ui(ui);
                         });
                 });

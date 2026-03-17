@@ -33,6 +33,7 @@ pub struct ChatExample {
     message_handler: Option<MessageHandler>,
     waiting_for_response: Arc<std::sync::Mutex<bool>>,
     picked_file_path: Option<String>,
+    main_input_enabled: bool,
 }
 
 impl Default for ChatExample {
@@ -75,6 +76,7 @@ impl ChatExample {
             message_handler: None,
             waiting_for_response: Arc::new(std::sync::Mutex::new(false)),
             picked_file_path: None,
+            main_input_enabled: true,
         }
     }
 
@@ -91,6 +93,10 @@ impl ChatExample {
     /// Get a reference to the waiting_for_response flag
     pub fn waiting_for_response(&self) -> &Arc<std::sync::Mutex<bool>> {
         &self.waiting_for_response
+    }
+
+    pub fn set_main_input_enabled(&mut self, enabled: bool) {
+        self.main_input_enabled = enabled;
     }
 
     pub fn export_rows(&self) -> Vec<(String, String, String)> {
@@ -175,7 +181,7 @@ impl ChatExample {
                                         .rounding(4.0)
                                         .inner_margin(egui::Margin::same(6.0))
                                         .outer_margin(egui::Margin {
-                                            left: 6.0,
+                                            left: 12.0,
                                             right: 0.0,
                                             top: 0.0,
                                             bottom: 4.0,
@@ -299,116 +305,120 @@ impl ChatExample {
                 ui.with_layout(Layout::top_down(Align::Center), |ui| {
                     ui.set_max_width(ui.available_width() * 0.8);
                     let rounding = 8.0; // Half of previous 16.0
-                    ui.horizontal(|ui| {
-                        let control_height = 26.0;
+                    ui.add_enabled_ui(self.main_input_enabled, |ui| {
+                        ui.horizontal(|ui| {
+                            let control_height = 26.0;
 
-                        // Text input (26px tall, rounded, vertically centered)
-                        let available_for_input = ui.available_width() - 80.0; // Space for button + spacing
-                        let input_frame = Frame::none()
-                            .fill(ui.visuals().widgets.inactive.bg_fill)
-                            .rounding(rounding)
-                            .inner_margin(egui::Margin::symmetric(10.0, 3.0)); // Small vertical margin for centering
-                        let response = input_frame
-                            .show(ui, |ui| {
-                                ui.set_height(control_height);
-                                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                                    ui.add_sized(
-                                        Vec2::new(available_for_input, control_height),
-                                        egui::TextEdit::singleline(&mut self.input_text)
-                                            .hint_text("Type a message")
-                                            .frame(false),
-                                    )
+                            // Text input (26px tall, rounded, vertically centered)
+                            let available_for_input = ui.available_width() - 80.0; // Space for button + spacing
+                            let input_frame = Frame::none()
+                                .fill(ui.visuals().widgets.inactive.bg_fill)
+                                .rounding(rounding)
+                                .inner_margin(egui::Margin::symmetric(10.0, 3.0)); // Small vertical margin for centering
+                            let response = input_frame
+                                .show(ui, |ui| {
+                                    ui.set_height(control_height);
+                                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                                        ui.add_sized(
+                                            Vec2::new(available_for_input, control_height),
+                                            egui::TextEdit::singleline(&mut self.input_text)
+                                                .hint_text("Type a message")
+                                                .frame(false),
+                                        )
+                                    })
+                                    .inner
                                 })
-                                .inner
-                            })
-                            .inner;
+                                .inner;
 
-                        ui.add_space(2.0); // Reduced spacing between input and button
+                            ui.add_space(2.0); // Reduced spacing between input and button
 
-                        // Send button (26px tall, rounded, vertically centered)
-                        let button_frame = Frame::none()
-                            .fill(ui.visuals().widgets.active.bg_fill)
-                            .rounding(rounding)
-                            .inner_margin(egui::Margin::symmetric(12.0, 3.0)); // Small vertical margin for centering
-                        let send_button_response = button_frame
-                            .show(ui, |ui| {
-                                ui.set_height(control_height);
-                                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                                    ui.add_sized(
-                                        Vec2::new(40.0, control_height),
-                                        egui::Button::new("Send").frame(false),
-                                    )
+                            // Send button (26px tall, rounded, vertically centered)
+                            let button_frame = Frame::none()
+                                .fill(ui.visuals().widgets.active.bg_fill)
+                                .rounding(rounding)
+                                .inner_margin(egui::Margin::symmetric(12.0, 3.0)); // Small vertical margin for centering
+                            let send_button_response = button_frame
+                                .show(ui, |ui| {
+                                    ui.set_height(control_height);
+                                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                                        ui.add_sized(
+                                            Vec2::new(40.0, control_height),
+                                            egui::Button::new("Send").frame(false),
+                                        )
+                                    })
+                                    .inner
                                 })
-                                .inner
-                            })
-                            .inner;
-                        let send_button_clicked = send_button_response.clicked();
-                        
-                        // Handle Enter key or send button
-                        let send_clicked = send_button_clicked
-                            || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                                .inner;
+                            let send_button_clicked = send_button_response.clicked();
 
-                        if send_clicked && !self.input_text.trim().is_empty() {
-                            let message_text = self.input_text.trim().to_string();
-                            self.input_text.clear();
+                            // Handle Enter key or send button
+                            let send_clicked = send_button_clicked
+                                || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
 
-                            // Add user's message
-                            let user_message = ChatMessage {
-                                content: message_text.clone(),
-                                from: Some("Human".to_string()),
-                            };
-                            self.messages.push(user_message);
-                            self.message_timestamps.push(Self::current_timestamp_string());
+                            if send_clicked && !self.input_text.trim().is_empty() {
+                                let message_text = self.input_text.trim().to_string();
+                                self.input_text.clear();
 
-                            // Use message handler if available, otherwise use default behavior
-                            if let Some(handler) = &self.message_handler {
-                                handler(message_text);
-                            } else {
-                                // Fallback: respond with "Please select a model"
-                                let tx = self.inbox.sender();
-                                let bot_message = ChatMessage {
-                                    content: "Please select a model".to_string(),
-                                    from: Some("System".to_string()),
+                                // Add user's message
+                                let user_message = ChatMessage {
+                                    content: message_text.clone(),
+                                    from: Some("Human".to_string()),
                                 };
-                                tx.send(bot_message).ok();
+                                self.messages.push(user_message);
+                                self.message_timestamps.push(Self::current_timestamp_string());
+
+                                // Use message handler if available, otherwise use default behavior
+                                if let Some(handler) = &self.message_handler {
+                                    handler(message_text);
+                                } else {
+                                    // Fallback: respond with "Please select a model"
+                                    let tx = self.inbox.sender();
+                                    let bot_message = ChatMessage {
+                                        content: "Please select a model".to_string(),
+                                        from: Some("System".to_string()),
+                                    };
+                                    tx.send(bot_message).ok();
+                                }
                             }
-                        }
+                        });
                     });
                     
                     // Plus button under the input, aligned to left
                     ui.add_space(4.0); // Small spacing between input row and plus button
-                    ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
-                        let plus_button_height = 26.0;
-                        let plus_button_frame = Frame::none()
-                            .fill(ui.visuals().widgets.inactive.bg_fill)
-                            .rounding(rounding)
-                            .inner_margin(egui::Margin::symmetric(12.0, 3.0));
-                        let plus_button_response = plus_button_frame
-                            .show(ui, |ui| {
-                                ui.set_height(plus_button_height);
-                                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                                    ui.add_sized(
-                                        Vec2::new(10.0, plus_button_height),
-                                        egui::Button::new("+").frame(false),
-                                    )
+                    ui.add_enabled_ui(self.main_input_enabled, |ui| {
+                        ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
+                            let plus_button_height = 26.0;
+                            let plus_button_frame = Frame::none()
+                                .fill(ui.visuals().widgets.inactive.bg_fill)
+                                .rounding(rounding)
+                                .inner_margin(egui::Margin::symmetric(12.0, 3.0));
+                            let plus_button_response = plus_button_frame
+                                .show(ui, |ui| {
+                                    ui.set_height(plus_button_height);
+                                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                                        ui.add_sized(
+                                            Vec2::new(10.0, plus_button_height),
+                                            egui::Button::new("+").frame(false),
+                                        )
+                                    })
+                                    .inner
                                 })
-                                .inner
-                            })
-                            .inner;
-                        
-                        if plus_button_response.clicked() {
-                            // Open file dialog
-                            if let Some(path) = rfd::FileDialog::new().pick_file() {
-                                self.picked_file_path = Some(path.display().to_string());
-                                println!("Selected file: {}", self.picked_file_path.as_ref().unwrap());
+                                .inner;
+                            
+                            if plus_button_response.clicked() {
+                                // Open file dialog
+                                if let Some(path) = rfd::FileDialog::new().pick_file() {
+                                    self.picked_file_path = Some(path.display().to_string());
+                                    println!("Selected file: {}", self.picked_file_path.as_ref().unwrap());
+                                }
                             }
-                        }
-                        
-                        // Display selected file path if any
-                        if let Some(ref file_path) = self.picked_file_path {
-                            ui.add_space(4.0);
-                            ui.label(egui::RichText::new(format!("File: {}", file_path)).small().weak());
-                        }
+                            
+                            // Display selected file path if any
+                            if let Some(ref file_path) = self.picked_file_path {
+                                ui.add_space(4.0);
+                                ui.label(egui::RichText::new(format!("File: {}", file_path)).small().weak());
+                            }
+                        });
                     });
                 });
         });
