@@ -209,6 +209,9 @@ impl ChatExample {
                                                     }
                                                     Some("Agent Evaluator") => egui::Color32::from_rgb(255, 105, 180),
                                                     Some("Agent Manager") => egui::Color32::from_rgb(255, 0, 0),
+                                                    Some("Agent Researcher") => {
+                                                        egui::Color32::from_rgb(128, 0, 255)
+                                                    }
                                                     Some(from) if from.starts_with("Agent") => {
                                                         egui::Color32::from_rgb(255, 255, 0)
                                                     }
