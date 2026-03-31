@@ -30,5 +30,4 @@ All endpoints are local-only (bind address in code). Inference for `/v1/*` uses 
 - `POST /` with conversation JSON — `sender_name` and `message` (plus optional metadata).
 - `POST /` with evaluator JSON — `evaluator_name`, `sentiment`, and `message`.
 
-- **OpenAI-compatible (Ollama):** `GET /v1/models` lists local models. `POST /v1/chat/completions` accepts `model`, `messages` (`role` / `content`), optional `max_tokens` (maps to Ollama `num_predict`), `temperature`, `seed`. Streaming is not supported yet (`stream: true` returns 400).
 - Example: `curl -X POST http://127.0.0.1:3000/ -H "Content-Type: application/json" -d '{"sender_name":"Agent 1","message":"Hi","sender_id":1,"receiver_id":0,"receiver_name":"UI","topic":"chat","timestamp":"11:44:50"}'`
