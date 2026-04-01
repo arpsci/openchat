@@ -2,3 +2,5 @@ target/
 *.db
 openchat.db
 openchat-audit.jsonl
+
+Cargo.lock
